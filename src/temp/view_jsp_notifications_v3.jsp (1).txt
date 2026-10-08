@@ -1,0 +1,342 @@
+<%-- =====================================================================
+     RFC 144154 - view.jsp v3: igualar el mockup (banner, checkbox junto al nombre,
+     "Select All on Page" en cards y tabla). Reemplaza lo anterior de notificaciones.
+     ===================================================================== --%>
+
+<%-- 0) BORRAR el texto de debug "HOLA PTO ${...}" que sigue en el JSP (se ve en cada card). --%>
+
+
+<%-- 1) BANNER (mockup): aparece solo con 1+ claims pendientes. El mensaje queda FUERA del banner
+        para que se vea despues de "Send Email Updates", cuando el banner ya se oculto. --%>
+<c:if test="${claimNotificationAccessAllowed}">
+<div id="claimNotifMsg" class="claim-notif-msg" role="status" aria-live="polite"></div>
+<div id="claimNotifBanner" class="claim-notif-banner" role="region" aria-label="Email updates" hidden="hidden">
+    <div class="claim-notif-summary">
+        <span class="claim-notif-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>
+            </svg>
+        </span>
+        <div>
+            <strong id="claimNotifCount">0 claims selected</strong>
+            <div>Receive updates when the status of these claim(s) change.</div>
+        </div>
+    </div>
+    <fieldset class="claim-notif-modes">
+        <legend>Email me:</legend>
+        <label>
+            <input type="radio" name="claimNotifMode" value="ALL" checked="checked" />
+            <span><strong>For all updates</strong><br/>Receive an email for every status change.</span>
+        </label>
+        <label>
+            <input type="radio" name="claimNotifMode" value="FINAL" />
+            <span><strong>Only for final processed update</strong><br/>Receive one email when the claim is finalized.</span>
+        </label>
+    </fieldset>
+    <div class="claim-notif-actions">
+        <button type="button" class="btn btn-pill btn-primary" id="claimNotifSend" disabled="disabled">Send Email Updates</button>
+        <button type="button" class="btn btn-pill btn-outline" id="claimNotifClear" disabled="disabled">X Clear Selection</button>
+    </div>
+</div>
+</c:if>
+
+
+<%-- 2) CARDS (panel de 3 y vista card): checkbox DENTRO de <div class="claim__title">, ANTES del <h3>.
+        Variable del loop = claim. En la vista card-only (pageList) usa el mismo bloque con su variable. --%>
+<%-- arriba del forEach de cards, junto al "Your Recent ... Claims": --%>
+<c:set var="previewCount" value="${totalSize > 3 ? 3 : totalSize}" />
+<c:if test="${claimNotificationAccessAllowed and previewCount > 0}">
+    <label class="claim-select-all">
+        <input type="checkbox" class="claim-notify-all" data-scope="cards" />
+        Select All on Page (<c:out value="${previewCount}"/>)
+    </label>
+</c:if>
+
+<%-- dentro del forEach: --%>
+<div class="claim__title">
+    <c:choose>
+        <c:when test="${claim.claimSourceType eq 'manual'}">
+            <c:set var="notifKey">M:${claim.claimInfoId}</c:set>
+        </c:when>
+        <c:otherwise>
+            <c:set var="notifKey">E:${claim.sourceSystemLibrary}|${claim.memberNo}|${claim.claimNo}</c:set>
+        </c:otherwise>
+    </c:choose>
+    <c:if test="${claimNotificationAccessAllowed}">
+        <input type="checkbox" class="claim-notify" data-scope="cards"
+               data-key="<c:out value='${notifKey}'/>"
+               aria-label="Email me when claim <c:out value='${claim.claimNo}'/> changes"
+               ${fn:toLowerCase(claim.claimStatus) eq 'processed' ? 'disabled="disabled"' : ''}
+               ${not empty claimNotificationSubscriptions[notifKey] ? 'checked="checked"' : ''} />
+    </c:if>
+    <h3>${claim.providerName}</h3>
+    <%-- ...badge existente sin cambios... --%>
+</div>
+<%-- Sin <span class="sr-only">: esa clase no existe en tu CSS y por eso se veia el texto
+     "Email me when this claim changes". El aria-label ya cubre accesibilidad. --%>
+
+
+<%-- 3) TABLA: la columna va PRIMERA (antes de Provider), no antes de View Details.
+        Arriba de la tabla, junto a "Claims from", el "Select All on Page" de la tabla. --%>
+<c:if test="${claimNotificationAccessAllowed}">
+    <label class="claim-select-all">
+        <input type="checkbox" class="claim-notify-all" data-scope="table" />
+        Select All on Page
+    </label>
+</c:if>
+
+<%-- primer table:column dentro de table:render --%>
+<c:if test="${claimNotificationAccessAllowed}">
+    <table:column type="expr" sortable="false" escapeXml="false" noHead="true"
+                  className="claim-notify-col" value="">
+        <c:choose>
+            <c:when test="${row.claimSourceType eq 'manual'}">
+                <c:set var="notifKey">M:${row.claimInfoId}</c:set>
+            </c:when>
+            <c:otherwise>
+                <c:set var="notifKey">E:${row.sourceSystemLibrary}|${row.memberNo}|${row.claimNo}</c:set>
+            </c:otherwise>
+        </c:choose>
+        <input type="checkbox" class="claim-notify" data-scope="table"
+               data-key="<c:out value='${notifKey}'/>"
+               aria-label="Email me when claim <c:out value='${row.claimNo}'/> changes"
+               ${fn:toLowerCase(row.claimStatus) eq 'processed' ? 'disabled="disabled"' : ''}
+               ${not empty claimNotificationSubscriptions[notifKey] ? 'checked="checked"' : ''} />
+    </table:column>
+</c:if>
+
+
+<%-- 4) JS completo (reemplaza el de la version anterior; misma IIFE propia, con init-once) --%>
+<c:if test="${claimNotificationAccessAllowed}">
+<script type="text/javascript">
+(function () {
+    var MAX = 5;                                   // aviso temprano; el servidor manda
+    var UPDATE_URL = '${claimNotifUpdateUrl}';
+    var BULK_URL = '${claimNotifBulkUrl}';
+    var STORE = 'claimNotifPending';
+
+    var serverSubscribed = {
+        <c:forEach items="${claimNotificationSubscriptions}" var="e" varStatus="s">
+            "<c:out value='${e.key}'/>": "<c:out value='${e.value}'/>"<c:if test="${!s.last}">,</c:if>
+        </c:forEach>
+    };
+
+    var state = window.__claimNotif;
+    if (!state) {
+        state = window.__claimNotif = { subscribed: {}, pending: {}, bound: false };
+        try { state.pending = JSON.parse(sessionStorage.getItem(STORE) || '{}'); } catch (e) { state.pending = {}; }
+    }
+    state.subscribed = serverSubscribed;
+
+    function save() { try { sessionStorage.setItem(STORE, JSON.stringify(state.pending)); } catch (e) {} }
+    function size(o) { return Object.keys(o).length; }
+    function $(id) { return document.getElementById(id); }
+    function enc(k, v) { return encodeURIComponent(k) + '=' + encodeURIComponent(v); }
+
+    function say(text, isError) {
+        var el = $('claimNotifMsg');
+        if (!el) return;
+        el.textContent = text || '';
+        el.className = 'claim-notif-msg' + (isError ? ' claim-notif-error' : '');
+    }
+
+    function limitMsg() { say('You can follow up to ' + MAX + ' claims at a time.', true); }
+
+    // checkboxes visibles y habilitados de una vista ("cards" | "table")
+    function boxesIn(scope) {
+        var all = document.querySelectorAll('input.claim-notify[data-scope="' + scope + '"]');
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            if (!all[i].disabled && all[i].offsetParent !== null) out.push(all[i]);
+        }
+        return out;
+    }
+
+    function addPending(key) {
+        if (size(state.subscribed) + size(state.pending) >= MAX) return false;
+        state.pending[key] = true;
+        return true;
+    }
+
+    function refreshBanner() {
+        var n = size(state.pending);
+        var banner = $('claimNotifBanner');
+        if (banner) banner.hidden = (n === 0);
+        var label = n + (n === 1 ? ' claim selected' : ' claims selected');
+        var count = $('claimNotifCount');
+        if (count && count.textContent !== label) count.textContent = label;   // solo si cambia
+        if ($('claimNotifSend')) $('claimNotifSend').disabled = (n === 0);
+        if ($('claimNotifClear')) $('claimNotifClear').disabled = (n === 0);
+    }
+
+    function sync() {
+        var boxes = document.querySelectorAll('input.claim-notify');
+        for (var i = 0; i < boxes.length; i++) {
+            var k = boxes[i].getAttribute('data-key');
+            boxes[i].checked = !!(state.subscribed[k] || state.pending[k]);
+        }
+        var alls = document.querySelectorAll('input.claim-notify-all');
+        for (var j = 0; j < alls.length; j++) {
+            var list = boxesIn(alls[j].getAttribute('data-scope'));
+            var every = list.length > 0;
+            for (var m = 0; m < list.length; m++) { if (!list[m].checked) { every = false; break; } }
+            alls[j].checked = every;
+            alls[j].disabled = (list.length === 0);
+        }
+        refreshBanner();
+    }
+
+    function post(url, params, cb) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            var data = null;
+            try { data = JSON.parse(xhr.responseText); } catch (e) {}
+            cb(xhr.status === 200 && data ? data : null);
+        };
+        xhr.send(params);
+    }
+
+    function onCheckboxChange(box) {
+        var key = box.getAttribute('data-key');
+        if (box.checked) {                                    // marcar = pendiente, sin BD
+            if (!addPending(key)) { box.checked = false; limitMsg(); return; }
+            save(); say('');
+            sync();
+        } else if (state.pending[key]) {                      // desmarcar un pendiente
+            delete state.pending[key]; save(); sync();
+        } else if (state.subscribed[key]) {                   // desmarcar uno activo = baja inmediata
+            box.disabled = true;
+            post(UPDATE_URL, enc('claimKey', key), function (r) {
+                box.disabled = false;
+                if (r && r.status === 'ok') {
+                    delete state.subscribed[key]; say('Email updates turned off for this claim.');
+                } else {
+                    box.checked = true; say('Could not update. Please try again.', true);
+                }
+                sync();
+            });
+        }
+    }
+
+    // "Select All on Page": marcar = agrega pendientes hasta el tope; desmarcar = quita solo pendientes
+    // (las ya suscritas se dan de baja una por una, no en masa).
+    function onSelectAll(all) {
+        var list = boxesIn(all.getAttribute('data-scope'));
+        if (all.checked) {
+            var hitLimit = false;
+            for (var i = 0; i < list.length; i++) {
+                var key = list[i].getAttribute('data-key');
+                if (state.subscribed[key] || state.pending[key]) continue;
+                if (!addPending(key)) { hitLimit = true; break; }
+            }
+            if (hitLimit) limitMsg(); else say('');
+        } else {
+            for (var j = 0; j < list.length; j++) {
+                delete state.pending[list[j].getAttribute('data-key')];
+            }
+        }
+        save(); sync();
+    }
+
+    function onSend(btn) {
+        var keys = Object.keys(state.pending);
+        if (!keys.length) return;
+        var modeEl = document.querySelector('input[name="claimNotifMode"]:checked');
+        var mode = modeEl ? modeEl.value : 'ALL';
+        var body = [enc('mode', mode)];
+        for (var i = 0; i < keys.length; i++) body.push(enc('claimKeys', keys[i]));
+
+        btn.disabled = true;
+        post(BULK_URL, body.join('&'), function (r) {
+            if (!r || r.status !== 'ok') {
+                say('Could not save your selection. Please try again.', true);
+                refreshBanner();
+                return;
+            }
+            var j, k;
+            for (j = 0; j < r.accepted.length; j++) {
+                state.subscribed[r.accepted[j]] = mode;
+                delete state.pending[r.accepted[j]];
+            }
+            var limit = false, processed = false;
+            for (k in r.rejected) {
+                if (!r.rejected.hasOwnProperty(k)) continue;
+                delete state.pending[k];
+                if (r.rejected[k] === 'LIMIT_REACHED') limit = true;
+                if (r.rejected[k] === 'PROCESSED') processed = true;
+            }
+            save(); sync();
+            var parts = [r.accepted.length + ' claim(s) will send email updates.'];
+            if (limit) parts.push('Maximum of ' + MAX + ' claims reached; the rest were not added.');
+            if (processed) parts.push('Processed claims cannot be tracked.');
+            say(parts.join(' '), limit || processed);
+        });
+    }
+
+    if (!state.bound) {                                   // listeners una sola vez (el script lleva ajaxOnLoad)
+        state.bound = true;
+        document.addEventListener('change', function (ev) {
+            var t = ev.target;
+            if (!t || !t.classList) return;
+            if (t.classList.contains('claim-notify')) onCheckboxChange(t);
+            else if (t.classList.contains('claim-notify-all')) onSelectAll(t);
+        });
+        document.addEventListener('click', function (ev) {
+            if (!ev.target.closest) return;
+            var send = ev.target.closest('#claimNotifSend');
+            if (send) { onSend(send); return; }
+            if (ev.target.closest('#claimNotifClear')) { state.pending = {}; save(); sync(); say(''); }
+        });
+        var host = document.querySelector('[id$="claimsSummaryContainer"]') || document.body;   // AJUSTAR id real
+        new MutationObserver(function () { sync(); }).observe(host, { childList: true, subtree: true });
+        // el toggle table/hybrid/card cambia la visibilidad sin tocar el DOM: re-sincronizar los "Select All"
+        document.addEventListener('click', function (ev) {
+            if (ev.target.closest && ev.target.closest('[data-client-claims-view]')) setTimeout(sync, 0);
+        });
+    }
+
+    sync();
+})();
+</script>
+</c:if>
+
+
+/* =====================================================================
+   5) ice_style.less - reemplaza tus reglas .claim-notify-col / .claim-notify-label.
+      Colores: cambia los hex por las variables del tema si las hay.
+   ===================================================================== */
+.claim-notif-msg { margin: 8px 0; font-size: 14px; }
+.claim-notif-error { color: #b00020; }
+
+.claim-notif-banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px;
+    padding: 16px 20px; margin: 16px 0;
+    border: 1px solid #1b6fa8; border-radius: 12px; background: #eaf3fb;
+}
+.claim-notif-banner[hidden] { display: none; }
+.claim-notif-summary { display: flex; align-items: center; gap: 12px; flex: 1 1 260px; }
+.claim-notif-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 50%; background: #cfe3f5; color: #1b4f7a;
+}
+.claim-notif-modes {
+    display: flex; flex-wrap: wrap; gap: 8px 24px; flex: 2 1 420px;
+    border: 0; border-left: 1px solid #b9cfe3; padding: 0 0 0 20px; margin: 0;
+}
+.claim-notif-modes legend { font-weight: 700; padding: 0; }
+.claim-notif-modes label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; flex: 1 1 200px; }
+.claim-notif-actions { display: flex; gap: 8px; }
+
+/* checkbox junto al nombre del provider (cards) */
+.claim__title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+input.claim-notify { width: 18px; height: 18px; cursor: pointer; margin: 0; flex: 0 0 auto; }
+input.claim-notify:disabled { opacity: .5; cursor: default; }
+
+.claim-select-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; float: right; }
+.claim-select-all input { width: 18px; height: 18px; margin: 0; }
+
+/* columna de la tabla */
+.claim-notify-col { width: 36px; text-align: center; }
