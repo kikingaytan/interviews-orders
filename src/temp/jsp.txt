@@ -1,0 +1,128 @@
+Ya está bien
+Líneas 33–34: las resourceURL tienen id= y var=.
+Líneas 43–73: el banner es el del v3, con hidden, “N claims selected”, “Email me:” y los botones.
+Líneas 444–449: el “Select All on Page” de la tabla usa data-scope="table".
+Línea 712: la columna de la tabla ya es la primera, justo después del spring:message coverageImage.
+Línea 995 en adelante: el JS es el v3 (boxesIn(scope), limitMsg, window.__claimNotif).
+Pendiente o incorrecto
+
+1. Cards preview (líneas 174–190)
+
+Líneas 174–182: siguen el HOLA PTO y el <label class="claim-notify-label"> viejo. Bórralos. Ese checkbox viejo no tiene data-scope, así que el JS nuevo no lo cuenta. Deja el c:choose de notifKey (166–173).
+Líneas 184–190: el previewCount y el “Select All on Page” quedaron dentro de claim__title. Ahí se repiten en cada card y falta el checkbox del claim. Bórralos de ahí.
+Dentro de claim__title (línea 183): pega este checkbox antes del <h3> (línea 191):
+jsp
+<c:if test="${claimNotificationAccessAllowed}">
+    <input type="checkbox" class="claim-notify" data-scope="cards"
+           data-key="<c:out value='${notifKey}'/>"
+           aria-label="Email me when this claim changes"
+           ${fn:toLowerCase(claim.claimStatus) eq 'processed' ? 'disabled="disabled" title="Processed claims cannot be tracked"' : ''}
+           ${not empty claimNotificationSubscriptions[notifKey] ? 'checked="checked"' : ''} />
+</c:if>
+Select All de las cards (una sola vez): va en panel__tools, líneas 149–152. totalSize se define hasta la línea 155, así que ahí uso fn:length:
+jsp
+<div class="panel__tools">
+    <c:set var="previewCount" value="${fn:length(claimsSummary.source) > 3 ? 3 : fn:length(claimsSummary.source)}" />
+    <c:if test="${claimNotificationAccessAllowed and previewCount > 0}">
+        <label class="claim-select-all">
+            <input type="checkbox" class="claim-notify-all" data-scope="cards" />
+            Select All on Page (<c:out value="${previewCount}"/>)
+        </label>
+    </c:if>
+    <div class="view"></div>
+</div>
+
+2. Vista card-only (líneas 453–457)
+No tiene checkbox. Haz estos cambios:
+
+Entre <article class="claim"> (455) y <div class="claim__title"> (456), pega el mismo c:choose de notifKey de las líneas 166–173.
+Después de la línea 456, pega el mismo <input class="claim-notify" data-scope="cards" …> del punto 1, antes del <h3> (457).
+Después de la línea 453 (<div class="client-claims-card-only">), pon un Select All igual al de arriba. Cámbiale el conteo a ${fn:length(claimsSummary.pageList)}.
+
+3. Checkbox de la tabla (líneas 721–723)
+Le faltan data-scope="table" y el aria-label. Sin eso, el Select All de la tabla no encuentra ninguna casilla. Reemplaza esas 3 líneas por:
+
+jsp
+<input type="checkbox" class="claim-notify" data-scope="table"
+       data-key="<c:out value='${notifKey}'/>"
+       aria-label="Email me when this claim changes"
+       ${fn:toLowerCase(row.claimStatus) eq 'processed' ? 'disabled="disabled"' : ''}
+       ${not empty claimNotificationSubscriptions[notifKey] ? 'checked="checked"' : ''} />
+Sobre comentar los if
+
+Un <!-- <c:if …> --> no desactiva nada. JSP procesa el <c:if> de todos modos, y por eso el HOLA PTO true y el label viejo siguen saliendo (líneas 32/35, 43/73, 175/182, 185/190, 444/449 y 711/725). Para comentar de verdad usa <%-- … --%> en la apertura y en el cierre. Para probar con claims Processed no comentes el if. Cambia temporalmente 'processed' por 'zzz' en los dos disabled (cards y tabla). En el servidor pon claim.notification.processed.statuses=NONE.
+
+Por revisar
+Banner (líneas 43–73): quedó dentro de <section class="pagehead">, arriba de los filtros. Funciona, pero si el mockup lo tiene debajo de los filtros, muévelo después de la línea 134.
+LESS: el banner usa hidden pero tendrá display:flex, y eso anula hidden. Confirma que tengas .claim-notif-banner[hidden]{display:none}. Mándame la sección de ice_style.less si no estás seguro.
+JS: solo vi hasta la línea 1041. Mándame de ahí al final para revisar onSend, los listeners y el id del contenedor del MutationObserver.
+Línea 990: el marcador rojo de coveragePreferences ya no se ve en esta captura.
+Conversación compactada
+
+De este me puedes dar los cambios exactos 
+Vista card-only (líneas 453–457)
+No tiene checkbox. Haz estos cambios:
+Entre <article class="claim"> (455) y <div class="claim__title"> (456), pega el mismo c:choose de notifKey de las líneas 166–173.
+Después de la línea 456, pega el mismo <input class="claim-notify" data-scope="cards" …> del punto 1, antes del <h3> (457).
+Después de la línea 453 (<div class="client-claims-card-only">), pon un Select All igual al de arriba. Cámbiale el conteo a ${fn:length(claimsSummary.pageList)}.
+
+Aquí está el bloque completo para la vista card-only. Reemplaza lo que tienes hoy en las líneas 453–457, que se ve así:
+
+jsp
+<div class="client-claims-card-only">
+<c:forEach var="claim" items="${claimsSummary.pageList}">
+    <article class="claim">
+        <div class="claim__title">
+            <h3>${claim.providerName}</h3>
+
+Déjalo así:
+
+jsp
+<div class="client-claims-card-only">
+
+    <%-- RFC 144154: Select All on Page (vista card-only) --%>
+    <c:if test="${claimNotificationAccessAllowed and fn:length(claimsSummary.pageList) > 0}">
+        <label class="claim-select-all">
+            <input type="checkbox" class="claim-notify-all" data-scope="cards" />
+            Select All on Page (<c:out value="${fn:length(claimsSummary.pageList)}"/>)
+        </label>
+    </c:if>
+
+    <c:forEach var="claim" items="${claimsSummary.pageList}">
+
+        <%-- RFC 144154: key de notificación (igual que ClaimKey.getKey()) --%>
+        <c:choose>
+            <c:when test="${claim.claimSourceType eq 'manual'}">
+                <c:set var="notifKey">M:${claim.claimInfoId}</c:set>
+            </c:when>
+            <c:otherwise>
+                <c:set var="notifKey">E:${claim.sourceSystemLibrary}|${claim.memberNo}|${claim.claimNo}</c:set>
+            </c:otherwise>
+        </c:choose>
+
+        <article class="claim">
+            <div class="claim__title">
+                <%-- RFC 144154: checkbox del claim --%>
+                <c:if test="${claimNotificationAccessAllowed}">
+                    <input type="checkbox" class="claim-notify" data-scope="cards"
+                           data-key="<c:out value='${notifKey}'/>"
+                           aria-label="Email me when this claim changes"
+                           ${fn:toLowerCase(claim.claimStatus) eq 'processed' ? 'disabled="disabled" title="Processed claims cannot be tracked"' : ''}
+                           ${not empty claimNotificationSubscriptions[notifKey] ? 'checked="checked"' : ''} />
+                </c:if>
+                <h3>${claim.providerName}</h3>
+
+Es el mismo bloque que va en el preview, con estas dos diferencias:
+
+La lista es claimsSummary.pageList, no claimsSummary.source.
+El conteo del Select All es fn:length(claimsSummary.pageList).
+
+Antes de pegar, revisa tres cosas:
+
+Indentación y </c:forEach>: el resto de la card (línea 458 en adelante: el <span class="badge …">, </div>, claim__grid, etc.) no cambia. Solo se agregaron líneas antes del <h3>, así que el </article> y el </c:forEach> de las líneas 692–693 siguen cerrando igual.
+Nombre notifKey: esta vista reutiliza el nombre notifKey del preview. Es seguro porque cada c:forEach la vuelve a asignar en cada vuelta antes de usarla.
+fn:: el taglib de fn ya lo usas en el resto del JSP (fn:toLowerCase, fn:length), así que no necesitas agregar nada.
+
+Si no ves el checkbox al probar, confirma que la card-only esté visible: el JS solo cuenta casillas con offsetParent !== null. Recuerda también que los claims Processed salen deshabilitados mientras no cambies temporalmente 'processed' por 'zzz' para probar.
+
+Claude trabaja directamente
