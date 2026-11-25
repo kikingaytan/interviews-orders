@@ -1,0 +1,26 @@
+DECLARE @P1 varchar(3)='PST', @lib varchar(6)='NLB', @mbrno varchar(15)='N10037940-02';
+
+-- 1. Periodos del miembro y su fecha vigente
+SELECT cov.benefit_package, cov.effective_date, cov.expiration_date,
+       as_of_date = CASE WHEN cov.effective_date  > GETDATE() THEN cov.effective_date
+                         WHEN cov.expiration_date > GETDATE() THEN GETDATE()
+                         ELSE cov.expiration_date END
+FROM iceportal.coverage_member(@P1, @lib, @mbrno, 'Y') cov
+WHERE cov.member_no = 'N10037940-01'
+ORDER BY cov.benefit_package, cov.effective_date;
+
+-- 2. Vigencia de la configuración de esos riders
+SELECT bcs.rider, bcs.benefit_package,
+       bcs.effective_date, bcs.expiration_date,
+       scl.effective_date AS scl_eff, scl.expiration_date AS scl_exp
+FROM snapshot.benefit_configuration_subclient bcs
+JOIN snapshot.subclient_location_group scl
+  ON  scl.source_system_type    = bcs.source_system_type
+  AND scl.source_system_library = bcs.source_system_library
+  AND scl.ice_client_id         = bcs.ice_client_id
+  AND scl.sub_client_id         = bcs.sub_client_id
+WHERE bcs.source_system_type    = @P1
+  AND bcs.source_system_library = @lib
+  AND scl.location_group        = 'A69102'
+  AND bcs.rider IN ('LAD', 'LDC', 'STD')
+ORDER BY bcs.rider, bcs.effective_date;
